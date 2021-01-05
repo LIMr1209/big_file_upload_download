@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <script src="./static/jquery-1.11.1.min.js"></script>
+    <script src="./static/bootstrap/js/bootstrap.min.js"></script>
+    <script src="./static/webuploader/webuploader.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="./static/webuploader/webuploader.css">
+    <link rel="stylesheet" type="text/css" href="./static/bootstrap/css/bootstrap.min.css">
+
+</head>
+<body>
+    <div style="margin:50px 0 0 50px;">
+        <div id="thelist" class="uploader-list"></div>
+        <div>
+            <div id="picker" >请选择</div>
+            <button id="ctlBtn" class="btn btn-default">开始上传</button>
+        </div>
+        <div id="progress" class="progress" style="width:500px;float:left;margin:10px 0 0 20px;">
+            <div class="progress-bar progress-bar-striped active" role="progressbar" style="width:0%;"></div>
+        </div>
+        <div style="clear:both;"></div>
+    </div>
+
+    <script type="text/javascript">
+    $(document).ready(function() {
+        var file_list_finish;
+
+        WebUploader.Uploader.register({
+            "before-send":"beforeSend",  //每个分片上传前
+        },
+        {
+            beforeSend:function(block){  //如果有分块上传，则每个分块上传之前调用此函数
+                var deferred = WebUploader.Deferred();
+                block_name = task_id + block.chunk;
+                for (var i=0;i<file_list_finish.length;i++)
+                {
+                    if (file_list_finish[i] == block_name){
+                        //取消分片发送
+                        deferred.reject();
+                        break;
+                    }
+                }
+                deferred.resolve();
+                return deferred.promise();
+            }
+        });
+
+        //点击选择，获取所有文件名称
+        $("#picker").on("click",function(){
+            $.ajax({
+                url: "/check",   //对应flask中的路由
+                type: "POST", //请求方法
+                data: 'POST TEST',   //传送的数据
+                dataType: "json", //传送的数据类型
+                success: function (data) {  //成功得到返回数据后回调的函数
+                    file_list_finish = data.file_list.toString().split(',');
+                    //alert(typeof(file_list_finish));
+                }
+
+            })
+        });
+
+        var task_id = WebUploader.Base.guid(); // 产生文件唯一标识符task_id
+        var uploader = WebUploader.create({
+            swf: './static/webuploader/Uploader.swf',
+            server: '{{ url_for("upload_part") }}', // 上传分片地址
+            pick: '#picker',
+            auto: false, // 是否选择完即上传
+            chunked: true,
+            chunkSize: 20 * 1024 * 1024,
+            chunkRetry: 3,
+            threads: 1,
+            chunkRetry : 2, //如果某个分片由于网络问题出错，允许自动重传次数
+            duplicate: false,  // 不允许重复上传
+            formData: { // 上传分片的http请求中一同携带的数据
+                task_id: task_id,
+            },
+        });
+       //上传按钮
+        $("#ctlBtn").on("click",function(){
+            if($("#ctlBtn").text() == "开始上传"){
+                files_p = $("p[state=unupload]")
+                if(files_p.length <= 0){
+                    alert("上传列表为空");
+                    return false;
+                }
+                uploader.upload();
+                $("#ctlBtn").text("暂停上传");
+            }else{
+                 uploader.stop(true);
+                 $("#ctlBtn").text("开始上传");
+            }
+        });
+
+        //文件队列
+        uploader.on( 'fileQueued', function( file ) {
+            var $list = $( '#thelist')
+            $list.append( '<div id="' + file.id + '" class="file-item">' +
+            '<h4 class="info">' + file.name + '</h4>' +
+            '<p class="state" state="unupload">等待上传...</p>'+'<a class="remove-this" href="javascript:;">取消上传(删除)</a>'+
+            '</div>'  );
+            $list.on('click','.remove-this',function(){
+                $.post('{{ url_for("delete_part") }}', {task_id: task_id}, function(rs){
+                    //
+                })
+                if ($(this).parents(".file-item").attr('id') == file.id) {
+                        uploader.removeFile(file);
+                        $(this).parents(".file-item").remove();
+                        $('#progress').hide();
+                    }
+			})
+        });
+
+        uploader.on('startUpload', function() {//开始上传时，调用该方法
+            $('#progress').show();
+            $('.progress-bar').css('width', '0%');
+            $('.progress-bar').text('0%');
+            $('.progress-bar').removeClass('progress-bar-danger progress-bar-success');
+            $('.progress-bar').addClass('active progress-bar-striped');
+        });
+
+        uploader.on('uploadProgress', function(file, percentage) { // 一个分片上传成功后，调用该方法
+            $('.progress-bar').css('width', percentage * 100 - 1 + '%');
+            $('.progress-bar').text(Math.floor(percentage * 100 - 1) + '%');
+            $( '#'+file.id ).find('p.state').text('上传中');
+        });
+
+        uploader.on('uploadSuccess', function(file) { // 整个文件的所有分片都上传成功后，调用该方法
+            var data = { 'task_id': task_id, 'filename': file.source['name'] };
+            $.get('{{ url_for("upload_success") }}', data);
+            $('.progress-bar').css('width', '100%');
+            $('.progress-bar').text('100%');
+            $('.progress-bar').addClass('progress-bar-success');
+            $('.progress-bar').text('上传完成');
+            $( '#'+file.id ).find('p.state').text('已上传');
+            $( '#'+file.id ).find('p.state').attr("state","upload");
+        });
+
+        uploader.on('uploadError', function(file) { // 上传过程中发生异常，调用该方法
+            $('.progress-bar').css('width', '100%');
+            $('.progress-bar').text('100%');
+            $('.progress-bar').addClass('progress-bar-danger');
+            $('.progress-bar').text('上传失败');
+            $( '#'+file.id ).find('p.state').attr("state","upload");
+
+        });
+
+        uploader.on('uploadComplete', function(file) { // 上传结束，无论文件最终是否上传成功，该方法都会被调用
+            $('.progress-bar').removeClass('active progress-bar-striped');
+            $("#ctlBtn").text("开始上传");
+        });
+        $('#progress').hide();
+
+    });
+    </script>
+</body>
+</html>
