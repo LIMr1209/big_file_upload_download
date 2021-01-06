@@ -118,6 +118,8 @@ def file_download(filename):
             content_length = file_size
             response = Response(the_file, content_type=content_type, status=200)
             response.headers['Content-Length'] = content_length
+            response.headers['Accept-Ranges'] = 'bytes' # 说明服务器支持按字节下载。
+            response.headers['Content-Range'] = f'bytes 0-{file_size - 1}/{file_size}'
             return response
         HTTP_RANGE = re.search(r'bytes=(\d*)-(\d*)', HTTP_RANGE, re.S)
         # 重新计算文件起始位置，切分bytes=0-32768(bytes=temp_size-pos)
@@ -144,7 +146,8 @@ def file_download(filename):
         if encoding:
             response.headers['Content-Encoding'] = encoding
         # ‘Content-Range’的'/'之前描述响应覆盖的文件字节范围，起始下标为0，'/'之后描述整个文件长度，与'HTTP_RANGE'对应使用
-        response.headers['Content-Range'] = f'bytes={start_bytes}-{stat_obj.st_size - 1}/{stat_obj.st_size}'
+        # Content-Range: bytes 0-499/22400  0－499 是指当前发送的数据的范围，而 22400 则是文件的总大小。
+        response.headers['Content-Range'] = f'bytes {start_bytes}-{file_size - 1}/{file_size}'
         return response
     else:
         abort(404)
